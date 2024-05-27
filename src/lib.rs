@@ -190,6 +190,7 @@ mod test {
 
 retour::static_detour! {
     static HookUWorldListen: unsafe extern "system" fn(*mut UWorld, *const FURL, *mut FString) -> bool;
+    static HookIsValidPlayerGUID: unsafe extern "system" fn(*const (), i32, *const ()) -> bool;
 }
 
 type FnAddItem =
@@ -202,6 +203,12 @@ type FnUWorldGetWorldInfo = unsafe extern "system" fn(
 unsafe fn patch() -> Result<()> {
     let base_address = GetModuleHandleW(None).unwrap().0 as usize;
     info!("base_address = {:x}", base_address);
+
+    HookIsValidPlayerGUID.initialize(
+        std::mem::transmute(base_address + 0xf216c0),
+        move |_, _, _| true,
+    )?;
+    HookIsValidPlayerGUID.enable()?;
 
     HookUWorldListen.initialize(
         std::mem::transmute(base_address + 0x7f6540),
