@@ -3,7 +3,11 @@ Hooks UWorld::Listen stub to re-implement necessary listen server logic.
 
 ## building
 ```
-cargo build --release
+# most recent version
+cargo build --release --features=manifest-4932913164832566208
+
+# or 808827202674972462
+cargo build --release --features=manifest-808827202674972462
 ```
 
 ## usage

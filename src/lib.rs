@@ -42,6 +42,8 @@ unsafe extern "system" fn init(_: usize) {
 
         if let Err(e) = patch() {
             error!("{e:#}");
+        } else {
+            info!("patches and hooks complete");
         }
     }
 }
@@ -108,7 +110,10 @@ struct UWorld {
 #[derive(Debug)]
 #[repr(C)]
 struct AWorldInfo {
+    #[cfg(feature = "manifest-4932913164832566208")]
     padding1: [u8; 0x638],
+    #[cfg(feature = "manifest-808827202674972462")]
+    padding1: [u8; 0x620],
     net_mode: u8,
     padding2: [u8; 0xbc],
     next_switch_countdown: f32,
@@ -176,8 +181,17 @@ mod test {
     use super::*;
     const _: [u8; 0x60] = [0; std::mem::offset_of!(UWorld, vtable_network_notify)];
     const _: [u8; 0x120] = [0; std::mem::offset_of!(UWorld, net_driver)];
+
+    #[cfg(feature = "manifest-4932913164832566208")]
     const _: [u8; 0x638] = [0; std::mem::offset_of!(AWorldInfo, net_mode)];
+    #[cfg(feature = "manifest-4932913164832566208")]
     const _: [u8; 0x6f8] = [0; std::mem::offset_of!(AWorldInfo, next_switch_countdown)];
+
+    #[cfg(feature = "manifest-808827202674972462")]
+    const _: [u8; 0x620] = [0; std::mem::offset_of!(AWorldInfo, net_mode)];
+    #[cfg(feature = "manifest-808827202674972462")]
+    const _: [u8; 0x6e0] = [0; std::mem::offset_of!(AWorldInfo, next_switch_countdown)];
+
     const _: [u8; 0x6e0] = [0; std::mem::offset_of!(UEngine, client)];
     const _: [u8; 0x310] = [0; std::mem::offset_of!(UEngineVTable, spawn_server_actors)];
     const _: [u8; 0x318] = [0; std::mem::offset_of!(UEngineVTable, construct_net_driver)];
@@ -200,18 +214,51 @@ type FnUWorldGetWorldInfo = unsafe extern "system" fn(
     check_streaming_persistence: bool,
 ) -> *mut AWorldInfo;
 
+#[derive(Debug)]
+struct Addresses {
+    is_player_guid_valid: usize,
+    u_world_listen: usize,
+    g_engine: usize,
+    g_use_seek_free_package_map: usize,
+    add_item: usize,
+    u_package_net_object_notfies: usize,
+    u_world_get_world_info: usize,
+}
+
 unsafe fn patch() -> Result<()> {
+    #[cfg(feature = "manifest-4932913164832566208")]
+    let addresses = Addresses {
+        is_player_guid_valid: 0xf216c0,
+        u_world_listen: 0x7f6540,
+        g_engine: 0x26761e0,
+        g_use_seek_free_package_map: 0x2539738,
+        add_item: 0x677860,
+        u_package_net_object_notfies: 0x2559850,
+        u_world_get_world_info: 0x7f8cf0,
+    };
+
+    #[cfg(feature = "manifest-808827202674972462")]
+    let addresses = Addresses {
+        is_player_guid_valid: 0xdd21d0,
+        u_world_listen: 0x7f8340,
+        g_engine: 0x238a200,
+        g_use_seek_free_package_map: 0x224e580,
+        add_item: 0xd14290,
+        u_package_net_object_notfies: 0x226d800,
+        u_world_get_world_info: 0x7fab90,
+    };
+
     let base_address = GetModuleHandleW(None).unwrap().0 as usize;
     info!("base_address = {:x}", base_address);
 
     HookIsValidPlayerGUID.initialize(
-        std::mem::transmute(base_address + 0xf216c0),
+        std::mem::transmute(base_address + addresses.is_player_guid_valid),
         move |_, _, _| true,
     )?;
     HookIsValidPlayerGUID.enable()?;
 
     HookUWorldListen.initialize(
-        std::mem::transmute(base_address + 0x7f6540),
+        std::mem::transmute(base_address + addresses.u_world_listen),
         move |world, url, error| {
             info!("uworld listen hooked");
 
@@ -219,8 +266,9 @@ unsafe fn patch() -> Result<()> {
 
             info!("net_driver = {net_driver:?}");
 
-            let gengine =
-                *std::mem::transmute::<usize, *const *mut UEngine>(base_address + 0x26761e0);
+            let gengine = *std::mem::transmute::<usize, *const *mut UEngine>(
+                base_address + addresses.g_engine,
+            );
             info!("gengine {gengine:?}");
             let vtable = element_ptr!(gengine => .vtable.* as UEngineVTable);
             info!("vtable {vtable:?}");
@@ -239,8 +287,9 @@ unsafe fn patch() -> Result<()> {
                 let code = f(net_driver, notify, url, &mut error);
                 info!("listen ret code = {code}");
 
-                let g_use_seek_free_package_map =
-                    *std::mem::transmute::<usize, *const u32>(base_address + 0x2539738);
+                let g_use_seek_free_package_map = *std::mem::transmute::<usize, *const u32>(
+                    base_address + addresses.g_use_seek_free_package_map,
+                );
                 info!("GUseSeekFreePackageMap = {g_use_seek_free_package_map}");
 
                 if g_use_seek_free_package_map == 0 {
@@ -253,20 +302,22 @@ unsafe fn patch() -> Result<()> {
                     element_ptr!(master_map => .vtable.*.add_net_packages.*)(master_map as *mut _);
                 }
                 info!("adding net object notify");
-                let add_item = std::mem::transmute::<usize, FnAddItem>(base_address + 0x677860);
+                let add_item =
+                    std::mem::transmute::<usize, FnAddItem>(base_address + addresses.add_item);
                 let notify =
                     element_ptr!(net_driver => .vtable_net_object_notify as FNetObjectNotify);
                 info!("NetDriver object notify = {notify:?}");
-                let object_notifies = std::mem::transmute::<
-                    usize,
-                    *mut TArray<*const FNetObjectNotify>,
-                >(base_address + 0x2559850);
+                let object_notifies =
+                    std::mem::transmute::<usize, *mut TArray<*const FNetObjectNotify>>(
+                        base_address + addresses.u_package_net_object_notfies,
+                    );
                 add_item(object_notifies, &(notify as *const _));
 
                 (element_ptr!(vtable => .spawn_server_actors.*))(gengine);
 
-                let get_world_info =
-                    std::mem::transmute::<usize, FnUWorldGetWorldInfo>(base_address + 0x7f8cf0);
+                let get_world_info = std::mem::transmute::<usize, FnUWorldGetWorldInfo>(
+                    base_address + addresses.u_world_get_world_info,
+                );
                 let world_info = get_world_info(world, false);
                 info!(
                     "world_info = {world_info:?} net_mode = {}",
